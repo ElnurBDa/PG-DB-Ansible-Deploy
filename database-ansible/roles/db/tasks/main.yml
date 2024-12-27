@@ -1,0 +1,123 @@
+---
+- name: Install psycopg2
+  apt:
+    name: python3-psycopg2
+    state: present
+  become: yes
+
+- name: Install PostgreSQL
+  apt:
+    name: postgresql
+    state: present
+  become: yes
+
+- name: Install PostgreSQL contrib (for additional features)
+  apt:
+    name: postgresql-contrib
+    state: present
+  become: yes
+
+- name: Ensure PostgreSQL is started and enabled
+  service:
+    name: postgresql
+    state: started
+    enabled: true
+  become: yes
+
+- name: Set PostgreSQL listen address to allow external connections
+  lineinfile:
+    path: /etc/postgresql/{{ postgresql_version }}/main/postgresql.conf
+    regexp: "^#?listen_addresses =.*"
+    line: "listen_addresses = '*'"
+  become: yes
+
+- name: Ensure PostgreSQL uses peer authentication temporarily for postgres user
+  lineinfile:
+    path: /etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf
+    regexp: '^local\s+all\s+postgres\s+md5'
+    line: "local   all             postgres                                peer"
+  become: yes
+
+- name: Restart PostgreSQL to apply peer authentication
+  service:
+    name: postgresql
+    state: restarted
+  become: yes
+
+- name: Set PostgreSQL password for the 'postgres' user using SQL command with sudo
+  shell: 'sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD ''{{ db_password }}'';"'
+  become: yes
+  args:
+    executable: /bin/bash
+
+- name: Set PostgreSQL authentication method to md5 for all local connections
+  lineinfile:
+    path: /etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf
+    regexp: '^local\s+all\s+postgres\s+peer'
+    line: "local   all             postgres                                md5"
+  become: yes
+
+- name: Allow all IP addresses to connect to PostgreSQL
+  lineinfile:
+    path: /etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf
+    line: "host    all             all             0.0.0.0/0               md5"
+    create: yes
+  become: yes
+
+- name: Restart PostgreSQL to apply changes
+  service:
+    name: postgresql
+    state: restarted
+  become: yes
+
+- name: Create PostgreSQL database
+  postgresql_db:
+    name: "{{ db_name }}"
+    state: present
+    login_user: postgres
+    login_password: "{{ db_password }}"
+    login_host: "localhost"
+    port: 5432
+  become: yes
+
+- name: Create PostgreSQL user
+  postgresql_user:
+    name: "{{ db_user }}"
+    password: "{{ db_password }}"
+    state: present
+    login_user: postgres
+    login_password: "{{ db_password }}"
+    login_host: "localhost"
+    port: 5432
+  become: yes
+
+- name: Grant privileges to user for the database
+  postgresql_privs:
+    db: "{{ db_name }}"
+    state: present
+    privs: ALL
+    roles: "{{ db_user }}"
+    type: database
+    login_user: postgres
+    login_password: "{{ db_password }}"
+    login_host: "localhost"
+    port: 5432
+  become: yes
+
+- name: Make PostgreSQL user a superuser
+  postgresql_user:
+    name: "{{ db_user }}"
+    password: "{{ db_password }}"
+    role_attr_flags: SUPERUSER
+    login_user: postgres
+    login_password: "{{ db_password }}"
+    login_host: "localhost"
+    port: 5432
+    state: present
+  become: yes
+
+- name: Restart PostgreSQL after granting privileges and changes
+  service:
+    name: postgresql
+    state: restarted
+  become: yes
